@@ -3,19 +3,20 @@
 # Consolidated setup for secure local signing.
 #
 # Run this YOURSELF after scripts/setup.py has generated the key.
-# Do three things in one flow:
 #
-#   1. Encrypt the private key at ~/.config/pd/private-key.pem with AES-256
-#   2. Compile and install the pd-keychain Swift helper (if needed)
-#   3. Store the passphrase in the macOS Keychain with Touch ID enforcement
+# Modes (auto-detected):
+#   - Unencrypted key → encrypts it + stores passphrase in Keychain
+#   - Encrypted key + no Keychain entry → stores passphrase in Keychain
+#   - Encrypted key + Keychain entry already → interactive menu
+#     (rotate passphrase / re-store in Keychain / quit)
 #
-# After this, sign.py will prompt Touch ID instead of asking for the passphrase.
+# After setup, sign.py prompts Touch ID instead of asking for the passphrase.
 #
 # Requires: Xcode Command Line Tools (xcode-select --install)
 #
 # Portability: Keychain items are device-bound (Touch ID ACL prevents iCloud
 # sync by Apple's design). For cross-device use, save the passphrase in your
-# password manager (Bitwarden/Vaultwarden). Re-run this script on each Mac.
+# password manager (Bitwarden/Vaultwarden) — re-run this on each Mac.
 
 set -euo pipefail
 
@@ -30,142 +31,257 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PDK_SRC="${REPO_ROOT}/${PDK_SRC_REL}"
 
+CLIPBOARD_CLEAR_SECONDS=60
+
 # ── Sanity checks ────────────────────────────────────────────────────────────
-if [ "$(uname -s)" != "Darwin" ]; then
-  echo "Error: this hardening flow is macOS-only (uses Touch ID + Keychain)." >&2
-  exit 1
-fi
+[ "$(uname -s)" = "Darwin" ] || { echo "Error: macOS-only (Touch ID + Keychain)" >&2; exit 1; }
+[ -f "$KEY" ] || { echo "Error: no signing key at $KEY — run scripts/setup.py first" >&2; exit 1; }
+[ -f "$PDK_SRC" ] || { echo "Error: $PDK_SRC not found" >&2; exit 1; }
 
-if [ ! -f "$KEY" ]; then
-  echo "Error: no signing key at $KEY" >&2
-  echo "Run: uv run scripts/setup.py --username <you> --email <you@...> --trust ../trust" >&2
-  exit 1
-fi
-
-if [ ! -f "$PDK_SRC" ]; then
-  echo "Error: $PDK_SRC not found (wrong working directory?)" >&2
-  exit 1
-fi
-
-# Determine account name (from signer.conf or prompt)
+# Determine account name
 ACCOUNT=""
 if [ -f "$CONFIG_FILE" ]; then
   ACCOUNT="$(grep -E '^github_username=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 | tr -d ' ' || true)"
 fi
 if [ -z "$ACCOUNT" ]; then
-  read -rp "GitHub username (for keychain account): " ACCOUNT
+  read -rp "GitHub username (keychain account): " ACCOUNT
 fi
 [ -z "$ACCOUNT" ] && { echo "Error: no account given" >&2; exit 1; }
 
-# ── Ask the user for the passphrase (once, used in both encryption + keychain)
-echo "=== Performance Dudes — Harden Signing ==="
-echo ""
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-if grep -q "ENCRYPTED" "$KEY" 2>/dev/null; then
-  KEY_ALREADY_ENCRYPTED=1
-  echo "Key already encrypted. We need the existing passphrase to store it in Keychain."
-  echo "Enter the passphrase you set previously:"
-  read -rs -p "Passphrase: " PW
-  echo ""
+suggest_passphrase() {
+  LC_ALL=C openssl rand -base64 32 | tr -d '\n' | tr '/+' '_-' | cut -c1-43
+}
 
-  # Verify it by attempting a decrypt to /dev/null via fd
-  if ! printf '%s\n' "$PW" | openssl pkey -passin stdin -in "$KEY" -out /dev/null 2>/dev/null; then
-    echo "Error: wrong passphrase or decryption failed" >&2
-    PW=""
-    exit 1
+# Copy to clipboard with auto-clear in background.
+# Usage: copy_to_clipboard "text"
+copy_to_clipboard() {
+  local value="$1"
+  if ! command -v pbcopy >/dev/null 2>&1; then
+    return 1
   fi
-  echo "✓ Passphrase verified."
-else
-  KEY_ALREADY_ENCRYPTED=0
-  echo "Key at $KEY is currently NOT encrypted."
-  echo ""
-  echo "⚠️  IMPORTANT"
-  echo "   Save the passphrase in your password manager FIRST."
-  echo "   If you lose it, the key is UNRECOVERABLE."
-  echo "   No unencrypted backup will be kept."
-  echo ""
-  read -rp "Continue? [y/N] " answer
-  [[ ! "$answer" =~ ^[Yy]$ ]] && { echo "Aborted."; exit 0; }
+  printf '%s' "$value" | pbcopy
+  # Auto-clear clipboard after N seconds (background, detached)
+  (
+    sleep "$CLIPBOARD_CLEAR_SECONDS"
+    current="$(pbpaste 2>/dev/null || echo "")"
+    if [ "$current" = "$value" ]; then
+      printf '' | pbcopy
+    fi
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  return 0
+}
 
-  # Suggest a strong random passphrase (32 bytes, base64-safe ~43 chars)
-  SUGGESTED="$(LC_ALL=C openssl rand -base64 32 | tr -d '\n' | tr '/+' '_-' | cut -c1-43)"
+# Check if key is encrypted
+is_encrypted() {
+  grep -q "ENCRYPTED" "$KEY" 2>/dev/null
+}
+
+# Verify passphrase by trying to decrypt to /dev/null
+verify_passphrase() {
+  local pw="$1"
+  printf '%s\n' "$pw" | openssl pkey -passin stdin -in "$KEY" -out /dev/null 2>/dev/null
+}
+
+# Encrypt key in place using passphrase
+encrypt_key_inplace() {
+  local pw="$1" src="$2"
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  printf '%s\n' "$pw" | openssl pkcs8 -topk8 \
+    -v2 aes-256-cbc -v2prf hmacWithSHA512 -iter 600000 \
+    -passout stdin \
+    -in "$src" -out "${tmpdir}/encrypted.pem"
+  mv "${tmpdir}/encrypted.pem" "$KEY"
+  chmod 600 "$KEY"
+  # shred the tmpdir
+  find "$tmpdir" -type f -exec rm -f {} + 2>/dev/null || true
+  rm -rf "$tmpdir"
+}
+
+# Decrypt key to a temp file, echo its path
+decrypt_key_to_temp() {
+  local pw="$1"
+  local tmp
+  tmp="$(mktemp)"
+  if ! printf '%s\n' "$pw" | openssl pkey -passin stdin -in "$KEY" -out "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 1
+  fi
+  echo "$tmp"
+}
+
+# Prompt for new passphrase (suggested or custom), set PW
+prompt_new_passphrase() {
+  local suggested
+  suggested="$(suggest_passphrase)"
   echo ""
-  echo "Suggested strong passphrase (43 chars, ~256 bits of entropy):"
+  echo "Suggested strong passphrase (43 chars, ~256 bits entropy):"
   echo ""
-  echo "    $SUGGESTED"
+  echo "    $suggested"
   echo ""
-  echo "Save it in your password manager now, then:"
-  echo "  [ENTER]  use this suggested passphrase"
-  echo "  [type]   type your own instead"
+  if copy_to_clipboard "$suggested"; then
+    echo "✓ Copied to clipboard — paste into your password manager now"
+    echo "  (clipboard auto-clears after ${CLIPBOARD_CLEAR_SECONDS}s)"
+  fi
   echo ""
-  read -rs -p "Your passphrase (or ENTER for suggested): " PW
+  echo "  [ENTER]  use suggested"
+  echo "  [type]   enter your own"
+  echo ""
+  read -rs -p "Your passphrase (or ENTER): " PW
   echo ""
 
   if [ -z "$PW" ]; then
-    PW="$SUGGESTED"
+    PW="$suggested"
     echo "Using suggested passphrase."
-    echo "⚠️  Make sure you saved it in your password manager above!"
   else
-    read -rs -p "Confirm:                             " PW2
+    read -rs -p "Confirm:                   " PW2
     echo ""
     if [ "$PW" != "$PW2" ]; then
+      PW=""; PW2=""; suggested=""
       echo "Error: passphrases don't match" >&2
-      PW=""
-      PW2=""
-      SUGGESTED=""
       exit 1
     fi
     PW2=""
   fi
+  suggested=""
+}
 
-  SUGGESTED=""
-fi
+# Check if keychain already has an entry for this account
+keychain_has_entry() {
+  [ -x "$PDK_DEST" ] && "$PDK_DEST" exists "$ACCOUNT" >/dev/null 2>&1
+}
 
-# ── Step 1: Encrypt the key (if not already) ─────────────────────────────────
-if [ "$KEY_ALREADY_ENCRYPTED" -eq 0 ]; then
-  echo ""
-  echo "[1/3] Encrypting $KEY..."
-  TMPDIR="$(mktemp -d)"
-  trap 'find "$TMPDIR" -type f -exec rm -f {} + 2>/dev/null; rm -rf "$TMPDIR"' EXIT
+# Store passphrase in Keychain
+keychain_store() {
+  local pw="$1"
+  printf '%s\n' "$pw" | "$PDK_DEST" store "$ACCOUNT"
+}
 
-  printf '%s\n' "$PW" | openssl pkcs8 -topk8 \
-    -v2 aes-256-cbc -v2prf hmacWithSHA512 -iter 600000 \
-    -passout stdin \
-    -in "$KEY" -out "${TMPDIR}/encrypted.pem"
-
-  # Atomically replace (no unencrypted backup)
-  mv "${TMPDIR}/encrypted.pem" "$KEY"
-  chmod 600 "$KEY"
-  echo "  ✓ encrypted (AES-256-CBC / HMAC-SHA512 / 600k PBKDF2 iterations)"
-else
-  echo ""
-  echo "[1/3] Key already encrypted — skipping."
-fi
-
-# ── Step 2: Compile and install pd-keychain ──────────────────────────────────
-echo ""
-echo "[2/3] Installing pd-keychain helper..."
-
-NEEDS_BUILD=1
-if [ -x "$PDK_DEST" ] && [ "$PDK_DEST" -nt "$PDK_SRC" ]; then
-  NEEDS_BUILD=0
-  echo "  pd-keychain already up to date at $PDK_DEST"
-fi
-
-if [ "$NEEDS_BUILD" -eq 1 ]; then
-  if ! command -v swiftc >/dev/null 2>&1; then
-    echo "Error: swiftc not found." >&2
-    echo "Install Xcode Command Line Tools: xcode-select --install" >&2
-    PW=""
-    exit 1
+update_config() {
+  mkdir -p "$CONFIG_DIR"
+  if [ -f "$CONFIG_FILE" ] && grep -q '^keychain_account=' "$CONFIG_FILE"; then
+    awk -v a="$ACCOUNT" '
+      /^keychain_account=/ { print "keychain_account=" a; next }
+      { print }
+    ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+  else
+    echo "keychain_account=$ACCOUNT" >> "$CONFIG_FILE"
   fi
+  chmod 600 "$CONFIG_FILE"
+}
+
+compile_helper() {
+  if [ -x "$PDK_DEST" ] && [ "$PDK_DEST" -nt "$PDK_SRC" ]; then
+    return 0
+  fi
+  command -v swiftc >/dev/null 2>&1 || {
+    echo "Error: swiftc not found. Install: xcode-select --install" >&2
+    exit 1
+  }
   mkdir -p "$(dirname "$PDK_DEST")"
   swiftc -O -o "$PDK_DEST" "$PDK_SRC"
   chmod 755 "$PDK_DEST"
   echo "  ✓ compiled and installed: $PDK_DEST"
+}
+
+# ── Main flow ────────────────────────────────────────────────────────────────
+echo "=== Performance Dudes — Harden Signing ==="
+echo ""
+
+PW=""
+MODE=""  # encrypt | store-existing | rotate
+
+if is_encrypted; then
+  echo "Key at $KEY is already encrypted."
+
+  # Ensure helper is installed before checking keychain
+  compile_helper >/dev/null
+
+  if keychain_has_entry; then
+    echo "Keychain already has an entry for '$ACCOUNT'."
+    echo ""
+    echo "What would you like to do?"
+    echo "  [r] Rotate passphrase (change it, update key + Keychain)"
+    echo "  [s] Re-store current passphrase in Keychain (e.g. after keychain reset)"
+    echo "  [q] Quit"
+    echo ""
+    read -rp "Choice [r/s/q]: " choice
+    case "$choice" in
+      r|R) MODE="rotate" ;;
+      s|S) MODE="store-existing" ;;
+      *) echo "Aborted."; exit 0 ;;
+    esac
+  else
+    echo "No keychain entry yet — will store current passphrase."
+    MODE="store-existing"
+  fi
+else
+  echo "Key is NOT encrypted — will encrypt it."
+  echo ""
+  echo "⚠️  IMPORTANT: save the passphrase in your password manager."
+  echo "   If lost, the key is UNRECOVERABLE."
+  read -rp "Continue? [y/N] " answer
+  [[ "$answer" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+  MODE="encrypt"
 fi
 
-# Warn if ~/.local/bin is not on PATH
+# ── Execute per mode ─────────────────────────────────────────────────────────
+
+case "$MODE" in
+  encrypt)
+    prompt_new_passphrase
+    echo ""
+    echo "[1/3] Encrypting key..."
+    encrypt_key_inplace "$PW" "$KEY"
+    echo "  ✓ encrypted (AES-256-CBC / HMAC-SHA512 / 600k PBKDF2)"
+    ;;
+
+  store-existing)
+    read -rs -p "Enter current passphrase: " PW
+    echo ""
+    verify_passphrase "$PW" || { PW=""; echo "Error: wrong passphrase" >&2; exit 1; }
+    echo "  ✓ passphrase verified"
+    echo ""
+    echo "[1/3] Key encryption already in place — skipped."
+    ;;
+
+  rotate)
+    read -rs -p "Enter CURRENT passphrase: " OLD_PW
+    echo ""
+    verify_passphrase "$OLD_PW" || { OLD_PW=""; echo "Error: wrong passphrase" >&2; exit 1; }
+    echo "  ✓ current passphrase verified"
+
+    # Get new passphrase (suggested or custom)
+    prompt_new_passphrase
+    NEW_PW="$PW"
+    PW=""
+
+    # Decrypt with old, re-encrypt with new
+    echo ""
+    echo "[1/3] Rotating passphrase on key..."
+    TMPKEY="$(decrypt_key_to_temp "$OLD_PW")" || { OLD_PW=""; NEW_PW=""; echo "Error: decrypt failed" >&2; exit 1; }
+    OLD_PW=""
+    trap 'find "$(dirname "$TMPKEY")" -path "$TMPKEY" -exec rm -f {} + 2>/dev/null; rm -f "$TMPKEY"' EXIT
+
+    encrypt_key_inplace "$NEW_PW" "$TMPKEY"
+    rm -f "$TMPKEY"
+    trap - EXIT
+    echo "  ✓ key re-encrypted with new passphrase"
+    PW="$NEW_PW"
+    NEW_PW=""
+    ;;
+esac
+
+# ── Step 2: install pd-keychain (if not done above) ─────────────────────────
+echo ""
+echo "[2/3] Ensuring pd-keychain helper is installed..."
+compile_helper
+echo "  ✓ $PDK_DEST"
+
+# PATH check
 case ":$PATH:" in
   *":${HOME}/.local/bin:"*) ;;
   *)
@@ -174,26 +290,16 @@ case ":$PATH:" in
     ;;
 esac
 
-# ── Step 3: Store passphrase in Keychain (Touch ID ACL) ──────────────────────
+# ── Step 3: store / update in keychain ──────────────────────────────────────
 echo ""
-echo "[3/3] Storing passphrase in macOS Keychain for account '$ACCOUNT'..."
-printf '%s\n' "$PW" | "$PDK_DEST" store "$ACCOUNT"
-echo "  ✓ stored (Touch ID / Apple Watch / login password required for reads)"
+echo "[3/3] Storing passphrase in Keychain for account '$ACCOUNT'..."
+keychain_store "$PW"
+echo "  ✓ stored (Touch ID required for reads)"
 
-# Update signer.conf with keychain_account
-mkdir -p "$CONFIG_DIR"
-if [ -f "$CONFIG_FILE" ] && grep -q '^keychain_account=' "$CONFIG_FILE"; then
-  awk -v a="$ACCOUNT" '
-    /^keychain_account=/ { print "keychain_account=" a; next }
-    { print }
-  ' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
-else
-  echo "keychain_account=$ACCOUNT" >> "$CONFIG_FILE"
-fi
-chmod 600 "$CONFIG_FILE"
-echo "  ✓ config updated: keychain_account=$ACCOUNT"
+update_config
+echo "  ✓ config: keychain_account=$ACCOUNT"
 
-# Clear passphrase from memory (best effort)
+# Clear
 PW=""
 
 echo ""
@@ -202,7 +308,5 @@ echo ""
 echo "Test — Touch ID prompt should appear:"
 echo "  uv run scripts/sign.py some.pdf"
 echo ""
-echo "Cross-device note:"
-echo "  This keychain item is bound to THIS Mac (required for Touch ID)."
-echo "  On a new Mac, run this script again — you'll need the passphrase"
-echo "  from your password manager."
+echo "Cross-device: re-run this script on each Mac (keychain items are"
+echo "device-bound for Touch ID security). Passphrase in your password manager."
