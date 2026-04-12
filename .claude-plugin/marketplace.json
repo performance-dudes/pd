@@ -6,7 +6,10 @@
   "plugins": [
     {
       "name": "pd",
-      "source": ".",
+      "source": {
+        "source": "github",
+        "repo": "performance-dudes/pd"
+      },
       "description": "Document signing and trust infrastructure for AI-first collaboration",
       "version": "0.1.0"
     }
