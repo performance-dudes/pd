@@ -158,11 +158,13 @@ def main() -> None:
         new_field_spec=field_spec,
     )
 
+    import io
+    output_buf = io.BytesIO()
     with open(args.pdf, "rb") as f:
         w = IncrementalPdfFileWriter(f)
-        out = pdf_signer.sign_pdf(w)
-        with open(args.pdf, "wb") as out_f:
-            out_f.write(out.getbuffer())
+        pdf_signer.sign_pdf(w, output=output_buf)
+    with open(args.pdf, "wb") as out_f:
+        out_f.write(output_buf.getvalue())
 
     # Cleanup temp stamp PDF
     if stamp_pdf_path:
