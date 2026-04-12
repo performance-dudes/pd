@@ -63,11 +63,15 @@ case "$ACTION" in
         ;;
 
     get)
-        # Will prompt the user (Touch ID or password) if keychain requires auth
-        security find-generic-password \
+        # Will prompt the user (Touch ID or password) if keychain requires auth.
+        # `security -w` appends a trailing newline; strip it via command
+        # substitution + printf so callers receive the exact secret bytes.
+        SECRET="$(security find-generic-password \
             -s "$SERVICE" \
             -a "$ACCOUNT" \
-            -w
+            -w)"
+        printf '%s' "$SECRET"
+        SECRET=""
         ;;
 
     delete)

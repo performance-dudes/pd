@@ -179,7 +179,8 @@ def main() -> None:
                         check=False,
                     )
                     if result.returncode == 0 and result.stdout:
-                        key_passphrase = result.stdout
+                        # Strip any trailing newline that keychain tooling may append
+                        key_passphrase = result.stdout.rstrip(b"\n\r")
                     else:
                         stderr = result.stderr.decode("utf-8", errors="replace").strip()
                         print(f"Keychain access failed: {stderr}", file=sys.stderr)
