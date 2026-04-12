@@ -51,18 +51,27 @@ This:
 
 ### 2. Get your certificate signed
 
+Choose the Issuing CA that will sign your cert. Any active Issuing CA works
+— the issued certificate always chains to the same Root CA either way.
+See `trust/.github/pki-partners.sh` for the list of available Issuing CAs.
+
+If you are one of the founders, use your own GitHub username. If you are a
+team member being onboarded, use the username of the founder who onboards you.
+
 ```bash
 cd ../trust
 git add pki/csrs/YOUR_GITHUB_USERNAME.csr
 git commit -m "feat: add CSR for YOUR_GITHUB_USERNAME"
 git push
 
+# Replace ISSUING_CA_USERNAME with your choice (e.g. your own username
+# if you are a founder, or your onboarder's username otherwise).
 gh workflow run pki-issue.yml \
-  -f issuer=felixboehm \
+  -f issuer=ISSUING_CA_USERNAME \
   -f csr_path=pki/csrs/YOUR_GITHUB_USERNAME.csr
 
-# Wait for workflow, approve the pki-felixboehm environment gate
-# in GitHub's UI, then merge the resulting cert PR.
+# Wait for the workflow, then approve the pki-ISSUING_CA_USERNAME
+# environment gate in GitHub's UI, and merge the resulting cert PR.
 
 git pull  # get the new cert
 cd ../pd
