@@ -1,0 +1,14 @@
+{
+  "name": "pd",
+  "owner": {
+    "name": "Performance Dudes"
+  },
+  "plugins": [
+    {
+      "name": "pd",
+      "source": ".",
+      "description": "Document signing and trust infrastructure for AI-first collaboration",
+      "version": "0.1.0"
+    }
+  ]
+}
