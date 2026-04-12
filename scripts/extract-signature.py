@@ -30,6 +30,30 @@ from pathlib import Path
 
 from PIL import Image
 
+CONFIG_DIR = Path.home() / ".config" / "pd"
+CONFIG_FILE = CONFIG_DIR / "signer.conf"
+
+
+def read_config() -> dict[str, str]:
+    if not CONFIG_FILE.exists():
+        return {}
+    result = {}
+    for line in CONFIG_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        result[k.strip()] = v.strip()
+    return result
+
+
+def update_config(updates: dict[str, str]) -> None:
+    current = read_config()
+    current.update(updates)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text("\n".join(f"{k}={v}" for k, v in current.items()) + "\n")
+    CONFIG_FILE.chmod(0o600)
+
 
 def render_pdf_page(pdf_path: Path, size: int = 3000) -> Image.Image:
     """Render a PDF page to PNG using macOS qlmanage."""
@@ -149,10 +173,12 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     result.save(args.output, "PNG")
 
+    update_config({"signature_path": str(args.output.resolve())})
+
     print(f"\n✓ Signature saved: {args.output}")
     print(f"  Size: {result.size[0]}x{result.size[1]}")
-    print(f"\nUse with:")
-    print(f"  uv run scripts/sign.py document.pdf --trust ../trust --signature {args.output}")
+    print(f"✓ Config updated: signature_path={args.output}")
+    print(f"\nUse with: uv run scripts/sign.py document.pdf")
 
 
 if __name__ == "__main__":

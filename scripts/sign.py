@@ -94,7 +94,12 @@ def png_to_stamp_pdf(png_path: Path) -> str:
 def main() -> None:
     conf = read_config()
     default_trust = Path(conf["trust_repo"]).expanduser() if "trust_repo" in conf else None
-    default_signature = DEFAULT_SIGNATURE if DEFAULT_SIGNATURE.exists() else None
+    # signature_path in config wins; else fall back to ~/.config/pd/signature.png
+    if "signature_path" in conf:
+        sig_candidate = Path(conf["signature_path"]).expanduser()
+        default_signature = sig_candidate if sig_candidate.exists() else None
+    else:
+        default_signature = DEFAULT_SIGNATURE if DEFAULT_SIGNATURE.exists() else None
     default_nosig = conf.get("no_signature_by_default", "").lower() in ("1", "true", "yes")
 
     parser = argparse.ArgumentParser(description="Sign a PDF with your X.509 certificate")

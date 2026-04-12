@@ -10,6 +10,9 @@ Usage:
 Generates a key pair, creates a CSR, and writes signer config.
 The CSR must then be submitted to the trust repo and signed via pki-issue.
 
+Config is merged: existing keys in ~/.config/pd/signer.conf are preserved
+unless overwritten by a new value. Comments and unknown keys are kept.
+
 Examples:
     uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de
     uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de --trust ../trust
@@ -21,6 +24,33 @@ import subprocess
 import sys
 from pathlib import Path
 
+CONFIG_DIR = Path.home() / ".config" / "pd"
+CONFIG_FILE = CONFIG_DIR / "signer.conf"
+
+
+def read_config() -> dict[str, str]:
+    """Read key=value pairs from signer.conf."""
+    if not CONFIG_FILE.exists():
+        return {}
+    result = {}
+    for line in CONFIG_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        result[k.strip()] = v.strip()
+    return result
+
+
+def update_config(updates: dict[str, str]) -> None:
+    """Merge updates into signer.conf, preserving existing keys."""
+    current = read_config()
+    current.update(updates)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k}={v}" for k, v in current.items()]
+    CONFIG_FILE.write_text("\n".join(lines) + "\n")
+    CONFIG_FILE.chmod(0o600)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Set up local signing environment")
@@ -30,13 +60,10 @@ def main() -> None:
     parser.add_argument("--trust", type=Path, help="Path to trust repo (copies CSR there if provided)")
     args = parser.parse_args()
 
-    config_dir = Path.home() / ".config" / "pd"
-    key_path = config_dir / "private-key.pem"
-    csr_path = config_dir / "signing.csr"
-    conf_path = config_dir / "signer.conf"
+    key_path = CONFIG_DIR / "private-key.pem"
+    csr_path = CONFIG_DIR / "signing.csr"
 
-    # Create config directory
-    config_dir.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Generate key pair (if not exists)
     if key_path.exists():
@@ -61,21 +88,27 @@ def main() -> None:
     print(f"Created CSR: {csr_path}")
     print(f"  Subject: {subject}")
 
-    # Write signer config
-    conf_path.write_text(
-        f"github_username={args.username}\n"
-        f"trust_repo={args.trust or '../trust'}\n"
-    )
-    print(f"Config: {conf_path}")
+    # Write / merge config
+    updates = {
+        "github_username": args.username,
+        "email": args.email,
+        "org": args.org,
+    }
+    if args.trust:
+        updates["trust_repo"] = str(args.trust.resolve())
+    update_config(updates)
+    print(f"Config updated: {CONFIG_FILE}")
+    for k, v in updates.items():
+        print(f"  {k}={v}")
 
-    # Copy CSR to trust repo if path provided
+    # Copy CSR to trust repo if provided
     if args.trust:
         csrs_dir = args.trust / "pki" / "csrs"
         csrs_dir.mkdir(parents=True, exist_ok=True)
         dest = csrs_dir / f"{args.username}.csr"
         dest.write_bytes(csr_path.read_bytes())
         print(f"\nCSR copied to: {dest}")
-        print(f"Next steps:")
+        print("Next steps:")
         print(f"  cd {args.trust}")
         print(f"  git add pki/csrs/{args.username}.csr")
         print(f"  git commit -m 'feat: add CSR for {args.username}'")
