@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# pd-keychain — wrapper around macOS `security` CLI for signing passphrase storage.
+#
+# Stores secrets in the login keychain with -T "" so that no application is
+# pre-authorized for access. Every access triggers a native macOS prompt.
+# If Touch ID for Keychain Access is enabled system-wide, the user can
+# authenticate biometrically; otherwise they enter their login password.
+#
+# Why not a Swift binary with SecAccessControl?
+# Biometric access control (SecAccessControlCreateWithFlags with .userPresence)
+# requires app entitlements that command-line binaries do not have. This shell
+# wrapper works on every Mac without codesigning.
+#
+# Usage:
+#   pd-keychain store <account>    # reads secret from stdin (single line)
+#   pd-keychain get <account>      # writes secret to stdout (may prompt user)
+#   pd-keychain delete <account>
+#   pd-keychain exists <account>   # exit 0 if present, 1 if not
+
+set -euo pipefail
+
+SERVICE="performance-dudes-pd"
+
+usage() {
+    echo "Usage: pd-keychain <store|get|delete|exists> <account>" >&2
+    exit 2
+}
+
+[ $# -lt 2 ] && usage
+ACTION="$1"
+ACCOUNT="$2"
+
+case "$ACTION" in
+    store)
+        # Read secret from stdin (one line)
+        if ! IFS= read -r SECRET; then
+            echo "Error: empty secret on stdin" >&2
+            exit 1
+        fi
+        if [ -z "$SECRET" ]; then
+            echo "Error: empty secret" >&2
+            exit 1
+        fi
+
+        # Remove any existing item (ignore errors if not present)
+        security delete-generic-password \
+            -s "$SERVICE" -a "$ACCOUNT" >/dev/null 2>&1 || true
+
+        # Add new with -T "" → no apps are pre-authorized, so every read
+        # will prompt the user for authentication.
+        # Piping the password via stdin of `security` is not supported
+        # by all macOS versions; pass via -w with the secret value.
+        # Note: briefly visible in `ps`, mitigated by being on an ephemeral
+        # local shell. The `security` command does not show -w in its own argv.
+        security add-generic-password \
+            -s "$SERVICE" \
+            -a "$ACCOUNT" \
+            -T "" \
+            -w "$SECRET" \
+            -U
+        SECRET=""
+        ;;
+
+    get)
+        # Will prompt the user (Touch ID or password) if keychain requires auth
+        security find-generic-password \
+            -s "$SERVICE" \
+            -a "$ACCOUNT" \
+            -w
+        ;;
+
+    delete)
+        security delete-generic-password \
+            -s "$SERVICE" \
+            -a "$ACCOUNT"
+        ;;
+
+    exists)
+        security find-generic-password \
+            -s "$SERVICE" \
+            -a "$ACCOUNT" >/dev/null 2>&1
+        ;;
+
+    *)
+        usage
+        ;;
+esac

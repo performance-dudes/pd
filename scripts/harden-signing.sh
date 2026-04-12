@@ -24,7 +24,7 @@ set -euo pipefail
 CONFIG_DIR="${HOME}/.config/pd"
 CONFIG_FILE="${CONFIG_DIR}/signer.conf"
 KEY="${CONFIG_DIR}/private-key.pem"
-PDK_SRC_REL="tools/pd-keychain.swift"
+PDK_SRC_REL="tools/pd-keychain"
 PDK_DEST="${HOME}/.local/bin/pd-keychain"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -174,17 +174,13 @@ update_config() {
 }
 
 compile_helper() {
+  # pd-keychain is a shell wrapper around `security` CLI. Just install/update it.
   if [ -x "$PDK_DEST" ] && [ "$PDK_DEST" -nt "$PDK_SRC" ]; then
     return 0
   fi
-  command -v swiftc >/dev/null 2>&1 || {
-    echo "Error: swiftc not found. Install: xcode-select --install" >&2
-    exit 1
-  }
   mkdir -p "$(dirname "$PDK_DEST")"
-  swiftc -O -o "$PDK_DEST" "$PDK_SRC"
-  chmod 755 "$PDK_DEST"
-  echo "  ✓ compiled and installed: $PDK_DEST"
+  install -m 755 "$PDK_SRC" "$PDK_DEST"
+  echo "  ✓ installed: $PDK_DEST"
 }
 
 # ── Main flow ────────────────────────────────────────────────────────────────
