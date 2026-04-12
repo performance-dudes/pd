@@ -111,12 +111,32 @@ def main() -> None:
             print(f"Error: {desc} not found: {path}", file=sys.stderr)
             sys.exit(1)
 
-    signer = signers.SimpleSigner.load(
-        str(args.key),
-        str(cert_path),
-        ca_chain_files=[str(issuer_cert), str(root_cert)],
-        key_passphrase=None,
-    )
+    # Detect if the key is encrypted (contains "ENCRYPTED" header line)
+    key_text = args.key.read_text()
+    key_encrypted = "ENCRYPTED" in key_text
+
+    key_passphrase = None
+    if key_encrypted:
+        import getpass
+        passphrase = getpass.getpass(f"Passphrase for {args.key}: ")
+        if not passphrase:
+            print("Error: passphrase required for encrypted key", file=sys.stderr)
+            sys.exit(1)
+        key_passphrase = passphrase.encode("utf-8")
+
+    try:
+        signer = signers.SimpleSigner.load(
+            str(args.key),
+            str(cert_path),
+            ca_chain_files=[str(issuer_cert), str(root_cert)],
+            key_passphrase=key_passphrase,
+        )
+    except Exception as e:
+        if key_encrypted:
+            print(f"Error loading key (wrong passphrase?): {e}", file=sys.stderr)
+        else:
+            print(f"Error loading key: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Build visual stamp if signature image provided
     stamp_style = None
