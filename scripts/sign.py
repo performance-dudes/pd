@@ -116,6 +116,11 @@ def main() -> None:
                              f"{default_signature or '(none)'})")
     parser.add_argument("--no-signature", action="store_true",
                         help="Sign without visible stamp (overrides default signature)")
+    parser.add_argument("--output", "-o", type=Path,
+                        help="Output path. Default: <input_stem>_<username>.pdf "
+                             "(chaining signers, e.g. contract_felixboehm_nantero1.pdf)")
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite output file if it exists")
     parser.add_argument("--field", default="PDSign", help="Signature field name (default: PDSign)")
     parser.add_argument("--reason", default="Document authenticity", help="Signing reason")
     parser.add_argument("--location", default="Performance Dudes", help="Signing location")
@@ -221,19 +226,45 @@ def main() -> None:
         new_field_spec=field_spec,
     )
 
+    # Determine output path: append _<username> to the stem
+    if args.output:
+        output_path = args.output
+    else:
+        stem = args.pdf.stem
+        # Avoid duplicate suffix if the same user signs twice in a row
+        suffix = f"_{username}"
+        if stem.endswith(suffix):
+            print(f"Error: input filename already ends with '{suffix}'. "
+                  f"Use --output to pick a different path or --force.", file=sys.stderr)
+            if not args.force:
+                sys.exit(1)
+            output_path = args.pdf.with_name(f"{stem}{suffix}{args.pdf.suffix}")
+        else:
+            output_path = args.pdf.with_name(f"{stem}{suffix}{args.pdf.suffix}")
+
+    if output_path.exists() and not args.force:
+        print(f"Error: output file exists: {output_path}", file=sys.stderr)
+        print("Use --force to overwrite, or --output to choose a different path.", file=sys.stderr)
+        sys.exit(1)
+
+    if output_path.resolve() == args.pdf.resolve():
+        print(f"Error: output path equals input path: {output_path}", file=sys.stderr)
+        sys.exit(1)
+
     import io
     output_buf = io.BytesIO()
     with open(args.pdf, "rb") as f:
         w = IncrementalPdfFileWriter(f)
         pdf_signer.sign_pdf(w, output=output_buf)
-    with open(args.pdf, "wb") as out_f:
+    with open(output_path, "wb") as out_f:
         out_f.write(output_buf.getvalue())
 
     # Cleanup temp stamp PDF
     if stamp_pdf_path:
         os.unlink(stamp_pdf_path)
 
-    print(f"Signed: {args.pdf}")
+    print(f"Signed: {output_path}")
+    print(f"  Input:     {args.pdf}")
     print(f"  Signer:    {username}")
     print(f"  Field:     {args.field}")
     print(f"  Reason:    {args.reason}")
