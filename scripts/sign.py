@@ -165,12 +165,35 @@ def main() -> None:
 
     key_passphrase = None
     if key_encrypted:
-        import getpass
-        passphrase = getpass.getpass(f"Passphrase for {args.key}: ")
-        if not passphrase:
-            print("Error: passphrase required for encrypted key", file=sys.stderr)
-            sys.exit(1)
-        key_passphrase = passphrase.encode("utf-8")
+        # Try Keychain (pd-keychain helper with Touch ID) first
+        keychain_account = conf.get("keychain_account")
+        if keychain_account:
+            import shutil
+            import subprocess
+            pdk = shutil.which("pd-keychain") or str(Path.home() / ".local" / "bin" / "pd-keychain")
+            if os.path.exists(pdk):
+                try:
+                    result = subprocess.run(
+                        [pdk, "get", keychain_account],
+                        capture_output=True,
+                        check=False,
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        key_passphrase = result.stdout
+                    else:
+                        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+                        print(f"Keychain access failed: {stderr}", file=sys.stderr)
+                        print("Falling back to manual passphrase entry...", file=sys.stderr)
+                except Exception as e:
+                    print(f"Keychain helper error: {e}", file=sys.stderr)
+
+        if key_passphrase is None:
+            import getpass
+            passphrase = getpass.getpass(f"Passphrase for {args.key}: ")
+            if not passphrase:
+                print("Error: passphrase required for encrypted key", file=sys.stderr)
+                sys.exit(1)
+            key_passphrase = passphrase.encode("utf-8")
 
     try:
         signer = signers.SimpleSigner.load(
