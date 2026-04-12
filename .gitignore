@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+# Signed test outputs — these are per-user artifacts, not shared
+test_*.pdf
