@@ -63,9 +63,7 @@ func store(account: String) {
         kSecAttrService as String: SERVICE,
         kSecAttrAccount as String: account,
         kSecValueData as String: data,
-        kSecAttrAccessControl as String: accessControl,
-        kSecUseDataProtectionKeychain as String: true,
-    ]
+        kSecAttrAccessControl as String: accessControl,    ]
 
     let status = SecItemAdd(addQuery as CFDictionary, nil)
     if status != errSecSuccess {
@@ -87,9 +85,7 @@ func get(account: String) {
         kSecAttrAccount as String: account,
         kSecReturnData as String: true,
         kSecMatchLimit as String: kSecMatchLimitOne,
-        kSecUseAuthenticationContext as String: context,
-        kSecUseDataProtectionKeychain as String: true,
-    ]
+        kSecUseAuthenticationContext as String: context,    ]
 
     var result: AnyObject?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -118,9 +114,7 @@ func delete(account: String) {
     let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: SERVICE,
-        kSecAttrAccount as String: account,
-        kSecUseDataProtectionKeychain as String: true,
-    ]
+        kSecAttrAccount as String: account,    ]
     let status = SecItemDelete(query as CFDictionary)
     if status == errSecItemNotFound {
         eprint("No item found for account '\(account)'")
@@ -142,9 +136,7 @@ func exists(account: String) {
         kSecAttrService as String: SERVICE,
         kSecAttrAccount as String: account,
         kSecMatchLimit as String: kSecMatchLimitOne,
-        kSecUseAuthenticationContext as String: context,
-        kSecUseDataProtectionKeychain as String: true,
-    ]
+        kSecUseAuthenticationContext as String: context,    ]
     let status = SecItemCopyMatching(query as CFDictionary, nil)
     // errSecInteractionNotAllowed means: exists but needs auth
     if status == errSecSuccess || status == errSecInteractionNotAllowed {
