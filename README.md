@@ -6,11 +6,26 @@ Document signing and trust infrastructure for AI-first collaboration.
 
 | Skill | Description |
 |---|---|
-| `/pd:setup-signing` | One-time setup: install pyHanko, generate key pair, get certificate |
-| `/pd:sign-document` | Sign a PDF with your X.509 certificate (PKCS#7 embedded signature) |
+| `/pd:setup-signing` | One-time setup: generate key pair, create CSR, get certificate |
+| `/pd:sign-document` | Sign a PDF with your X.509 certificate |
 | `/pd:verify` | Verify a signed PDF against the Root CA |
 
-## Install
+## Scripts
+
+All scripts use `uv run` — dependencies are auto-installed, no manual `pip install` needed.
+
+```bash
+# Setup (one-time)
+uv run scripts/setup.py --username felixboehm --email felix@example.com --trust ../trust
+
+# Sign a PDF
+uv run scripts/sign.py document.pdf --trust ../trust
+
+# Verify a signed PDF
+uv run scripts/verify.py document.pdf --trust ../trust
+```
+
+## Install as Claude Code Plugin
 
 ```bash
 claude plugin marketplace add performance-dudes/pd
@@ -19,12 +34,6 @@ claude plugin install pd@pd
 
 ## Requirements
 
+- [uv](https://docs.astral.sh/uv/) (Python package runner)
 - [performance-dudes/trust](https://github.com/performance-dudes/trust) repo cloned locally
-- `gh` CLI authenticated
-- Python 3 with pip
-
-## How it works
-
-1. **Setup** (`/pd:setup-signing`): generates a local key pair, creates a CSR, submits it to the trust repo for signing by your Issuing CA
-2. **Sign** (`/pd:sign-document`): embeds a PKCS#7 digital signature in a PDF using your certificate + private key
-3. **Verify** (`/pd:verify`): checks signatures in a PDF and traces them to the Root CA
+- `gh` CLI authenticated (for certificate issuance)
