@@ -90,10 +90,25 @@ def validate_signatures(pdf_path: Path, trust_path: Path) -> bool:
     return all_valid
 
 
+def read_trust_from_config() -> Path | None:
+    """Read trust_repo= from ~/.config/pd/signer.conf."""
+    conf = Path.home() / ".config" / "pd" / "signer.conf"
+    if not conf.exists():
+        return None
+    for line in conf.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("trust_repo="):
+            return Path(line.split("=", 1)[1].strip()).expanduser()
+    return None
+
+
 def main() -> None:
+    default_trust = read_trust_from_config()
     parser = argparse.ArgumentParser(description="Verify PDF digital signatures")
     parser.add_argument("pdf", type=Path, help="PDF file to verify")
-    parser.add_argument("--trust", type=Path, help="Path to trust repo (enables chain validation)")
+    parser.add_argument("--trust", type=Path, default=default_trust,
+                        help=f"Path to trust repo (default: trust_repo from signer.conf, "
+                             f"current: {default_trust})")
     args = parser.parse_args()
 
     if not args.pdf.exists():

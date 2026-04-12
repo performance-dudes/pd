@@ -12,7 +12,8 @@
 #   1. Checks if the key at ~/.config/pd/private-key.pem is already encrypted
 #   2. If not, prompts you for a passphrase (twice to confirm)
 #   3. Creates a backup at ~/.config/pd/private-key.pem.bak
-#   4. Replaces the key with an AES-256 encrypted version
+#   4. Replaces the key with a PKCS#8 encrypted version
+#      (AES-256-CBC, HMAC-SHA512 PRF, 600k PBKDF2 iterations)
 #
 # After running: sign.py will prompt for the passphrase at signing time.
 
@@ -47,13 +48,14 @@ if grep -q "ENCRYPTED" "$KEY" 2>/dev/null; then
     exit 1
   fi
 
-  echo ""
-  echo "Enter the NEW passphrase (AES-256 encryption):"
   cp "$KEY" "$BACKUP"
-  openssl pkey -in "${TMPDIR}/unencrypted.pem" -aes256 -out "$KEY"
+  echo ""
+  echo "Enter the NEW passphrase (AES-256-CBC, HMAC-SHA512, 600k PBKDF2 iterations):"
+  openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA512 -iter 600000 \
+    -in "${TMPDIR}/unencrypted.pem" -out "$KEY"
   chmod 600 "$KEY"
   echo ""
-  echo "✓ Passphrase changed."
+  echo "✓ Passphrase changed (AES-256-CBC / HMAC-SHA512 / 600k iterations)."
   echo "  Backup of previous encrypted key: $BACKUP"
 else
   echo "Key at $KEY is currently NOT encrypted."
@@ -80,12 +82,14 @@ else
   TMPDIR="$(mktemp -d)"
   trap 'rm -rf "$TMPDIR"' EXIT
 
-  openssl pkey -in "$KEY" -aes256 -out "${TMPDIR}/encrypted.pem"
+  # PKCS#8 v2 with AES-256-CBC, HMAC-SHA512 PRF, 600k PBKDF2 iterations
+  openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA512 -iter 600000 \
+    -in "$KEY" -out "${TMPDIR}/encrypted.pem"
   mv "${TMPDIR}/encrypted.pem" "$KEY"
   chmod 600 "$KEY"
 
   echo ""
-  echo "✓ Key is now AES-256 encrypted."
+  echo "✓ Key is now encrypted (AES-256-CBC / HMAC-SHA512 / 600k PBKDF2 iterations)."
   echo "  sign.py will prompt for the passphrase at signing time."
   echo ""
   echo "Test it:"

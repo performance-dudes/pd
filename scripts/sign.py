@@ -33,18 +33,36 @@ from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 from pyhanko.pdf_utils.content import ImportedPdfPage
 
 
-def find_username(trust_path: Path) -> str | None:
+CONFIG_DIR = Path.home() / ".config" / "pd"
+CONFIG_FILE = CONFIG_DIR / "signer.conf"
+DEFAULT_SIGNATURE = CONFIG_DIR / "signature.png"
+
+
+def read_config() -> dict[str, str]:
+    """Read key=value pairs from ~/.config/pd/signer.conf."""
+    if not CONFIG_FILE.exists():
+        return {}
+    result = {}
+    for line in CONFIG_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        result[k.strip()] = v.strip()
+    return result
+
+
+def find_username(trust_path: Path | None) -> str | None:
     """Try to detect username from signer.conf or available certs."""
-    conf = Path.home() / ".config" / "pd" / "signer.conf"
-    if conf.exists():
-        for line in conf.read_text().splitlines():
-            if line.startswith("github_username="):
-                return line.split("=", 1)[1].strip()
-    certs_dir = trust_path / "pki" / "certs"
-    if certs_dir.exists():
-        pems = list(certs_dir.glob("*.pem"))
-        if len(pems) == 1:
-            return pems[0].stem
+    conf = read_config()
+    if "github_username" in conf:
+        return conf["github_username"]
+    if trust_path:
+        certs_dir = trust_path / "pki" / "certs"
+        if certs_dir.exists():
+            pems = list(certs_dir.glob("*.pem"))
+            if len(pems) == 1:
+                return pems[0].stem
     return None
 
 
@@ -74,13 +92,25 @@ def png_to_stamp_pdf(png_path: Path) -> str:
 
 
 def main() -> None:
+    conf = read_config()
+    default_trust = Path(conf["trust_repo"]).expanduser() if "trust_repo" in conf else None
+    default_signature = DEFAULT_SIGNATURE if DEFAULT_SIGNATURE.exists() else None
+    default_nosig = conf.get("no_signature_by_default", "").lower() in ("1", "true", "yes")
+
     parser = argparse.ArgumentParser(description="Sign a PDF with your X.509 certificate")
     parser.add_argument("pdf", type=Path, help="PDF file to sign (modified in-place)")
-    parser.add_argument("--trust", type=Path, required=True, help="Path to the trust repo")
-    parser.add_argument("--username", help="GitHub username (auto-detected from ~/.config/pd/signer.conf)")
+    parser.add_argument("--trust", type=Path, default=default_trust,
+                        help=f"Path to the trust repo (default: trust_repo from signer.conf, "
+                             f"current: {default_trust})")
+    parser.add_argument("--username", help="GitHub username (auto-detected from signer.conf)")
     parser.add_argument("--key", type=Path, default=Path.home() / ".config" / "pd" / "private-key.pem",
                         help="Private key path (default: ~/.config/pd/private-key.pem)")
-    parser.add_argument("--signature", type=Path, help="Signature image (PNG) for visible stamp")
+    parser.add_argument("--signature", type=Path,
+                        default=None if default_nosig else default_signature,
+                        help=f"Signature image for visible stamp (default: "
+                             f"{default_signature or '(none)'})")
+    parser.add_argument("--no-signature", action="store_true",
+                        help="Sign without visible stamp (overrides default signature)")
     parser.add_argument("--field", default="PDSign", help="Signature field name (default: PDSign)")
     parser.add_argument("--reason", default="Document authenticity", help="Signing reason")
     parser.add_argument("--location", default="Performance Dudes", help="Signing location")
@@ -88,8 +118,16 @@ def main() -> None:
     parser.add_argument("--box", help="Signature box: x1,y1,x2,y2 in points (default: 350,50,550,120)")
     args = parser.parse_args()
 
+    if args.no_signature:
+        args.signature = None
+
     if not args.pdf.exists():
         print(f"Error: PDF not found: {args.pdf}", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.trust:
+        print("Error: --trust not set and no trust_repo in signer.conf", file=sys.stderr)
+        print(f"Add 'trust_repo=/path/to/trust' to {CONFIG_FILE}", file=sys.stderr)
         sys.exit(1)
 
     if not args.key.exists():
