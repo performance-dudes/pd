@@ -16,9 +16,9 @@ Config is merged: existing keys in ~/.config/pd/signer.conf are preserved
 unless overwritten by a new value. Comments and unknown keys are kept.
 
 Examples:
-    uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de
-    uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de --force --bits 4096
-    uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de --trust /custom/path
+    uv run scripts/setup.py --username <github-user> --email <email>
+    uv run scripts/setup.py --username <github-user> --email <email> --force --bits 4096
+    uv run scripts/setup.py --username <github-user> --email <email> --trust /custom/path
 """
 
 import argparse
