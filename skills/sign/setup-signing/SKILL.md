@@ -39,10 +39,22 @@ mkdir -p ~/.config/pd
 
 The private key stays on this machine. Never upload it anywhere.
 
+PD default is **RSA-4096** for durable signatures. (BSI minimum for long-term signing is RSA-3072; we go above that for extra classical-security margin. True quantum safety requires the whole chain on ML-DSA / SLH-DSA, tracked separately.)
+
+Prefer running the script — it handles defaults, force-overwrite for key upgrades, and CSR + config all in one:
+
 ```bash
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out ~/.config/pd/private-key.pem
+cd ~/work/performance-dudes/pd
+uv run scripts/setup.py --username <github-user> --email <email> --trust ../trust
+# add --bits 3072 only if you need the smaller key for some reason
+# add --force to overwrite an existing key (e.g., upgrading from 2048 → 4096)
+```
+
+Raw-openssl fallback if the script isn't available:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out ~/.config/pd/private-key.pem
 chmod 600 ~/.config/pd/private-key.pem
-echo "Private key generated at ~/.config/pd/private-key.pem"
 ```
 
 ### 4. Create Certificate Signing Request (CSR)

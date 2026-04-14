@@ -45,7 +45,7 @@ uv run scripts/setup.py \
 ```
 
 This:
-- generates `~/.config/pd/private-key.pem` (RSA 2048)
+- generates `~/.config/pd/private-key.pem` (RSA-4096 by default; override with `--bits 3072` if a smaller key is required)
 - creates a CSR and copies it to `../trust/pki/csrs/YOUR_GITHUB_USERNAME.csr`
 - writes `~/.config/pd/signer.conf` with your defaults
 
