@@ -3,6 +3,7 @@
 #   "pyhanko[opentype]>=0.25",
 #   "cryptography>=42",
 #   "pyhanko-certvalidator>=0.26",
+#   "certifi>=2024.2.2",
 # ]
 # requires-python = ">=3.10"
 # ///
@@ -11,8 +12,13 @@
 Usage:
     uv run scripts/verify.py <pdf> [--trust <trust-repo-path>]
 
-Without --trust: lists signatures and their details.
-With --trust: also validates the chain against the Root CA.
+Signer chain is validated against the PD Root CA (from --trust or
+signer.conf). Timestamp chain is validated against the public Mozilla
+CA bundle (certifi) — that's where common TSAs (DigiCert, Sectigo,
+GlobalSign) anchor. Both validations run offline: the TSA cert is
+embedded in the signature and certifi ships the roots locally.
+
+Without --trust: lists signatures and their details (no validation).
 
 Examples:
     uv run scripts/verify.py contract.pdf
@@ -26,8 +32,23 @@ from pathlib import Path
 from pyhanko.pdf_utils.reader import PdfFileReader
 
 
+def _load_public_ca_bundle():
+    """Load Mozilla's curated CA roots via certifi. Used for TSA chain
+    validation — common TSAs (DigiCert, Sectigo, GlobalSign) anchor here."""
+    import certifi
+    from asn1crypto import pem, x509
+
+    roots = []
+    with open(certifi.where(), "rb") as f:
+        data = f.read()
+    for type_name, _headers, der in pem.unarmor(data, multiple=True):
+        if type_name == "CERTIFICATE":
+            roots.append(x509.Certificate.load(der))
+    return roots
+
+
 def list_signatures(pdf_path: Path) -> None:
-    """List all signatures in a PDF."""
+    """List all signatures in a PDF without cryptographic validation."""
     with open(pdf_path, "rb") as f:
         reader = PdfFileReader(f)
         sigs = list(reader.embedded_signatures)
@@ -39,16 +60,18 @@ def list_signatures(pdf_path: Path) -> None:
         print(f"Found {len(sigs)} signature(s):\n")
         for sig in sigs:
             cert = sig.signer_cert
+            has_ts = sig.attached_timestamp_data is not None
             print(f"  Field:      {sig.field_name}")
             print(f"  Signer:     {cert.subject.human_friendly}")
             print(f"  Issuer:     {cert.issuer.human_friendly}")
             print(f"  Valid from: {cert.not_valid_before}")
             print(f"  Valid to:   {cert.not_valid_after}")
+            print(f"  Timestamp:  {'attached (RFC 3161)' if has_ts else 'none'}")
             print()
 
 
 def validate_signatures(pdf_path: Path, trust_path: Path) -> bool:
-    """Validate signatures against the trust repo's Root CA."""
+    """Validate signatures. Signer chain → PD Root. TSA chain → public roots."""
     from pyhanko.sign.validation import validate_pdf_signature
     from pyhanko_certvalidator import ValidationContext
     from asn1crypto import pem, x509
@@ -62,7 +85,9 @@ def validate_signatures(pdf_path: Path, trust_path: Path) -> bool:
         _, _, der = pem.unarmor(f.read())
         root = x509.Certificate.load(der)
 
-    vc = ValidationContext(trust_roots=[root])
+    signer_vc = ValidationContext(trust_roots=[root])
+    ts_vc = ValidationContext(trust_roots=_load_public_ca_bundle())
+
     all_valid = True
 
     with open(pdf_path, "rb") as f:
@@ -75,14 +100,29 @@ def validate_signatures(pdf_path: Path, trust_path: Path) -> bool:
 
         print(f"Found {len(sigs)} signature(s):\n")
         for sig in sigs:
-            status = validate_pdf_signature(sig, vc)
+            status = validate_pdf_signature(
+                sig,
+                signer_validation_context=signer_vc,
+                ts_validation_context=ts_vc,
+            )
             ok = "PASS" if status.bottom_line else "FAIL"
+            has_ts = sig.attached_timestamp_data is not None
             print(f"  [{ok}] {sig.field_name}")
             print(f"    Signer:     {status.signing_cert.subject.human_friendly}")
             print(f"    Issuer:     {status.signing_cert.issuer.human_friendly}")
             print(f"    Intact:     {status.intact}")
             print(f"    Valid:      {status.valid}")
             print(f"    Trusted:    {status.trusted}")
+            if has_ts:
+                ts_trusted = (
+                    status.timestamp_validity is not None
+                    and getattr(status.timestamp_validity, "trusted", False)
+                )
+                print(f"    Timestamp:  attached, chain trusted: {ts_trusted}")
+                if not ts_trusted:
+                    all_valid = False
+            else:
+                print(f"    Timestamp:  none attached")
             print()
             if not status.bottom_line:
                 all_valid = False
