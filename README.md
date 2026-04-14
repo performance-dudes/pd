@@ -139,14 +139,14 @@ Acrobat shows a blue banner at the top with signature status. The first time, it
 # Sign any PDF (output: <filename>_<your-username>.pdf)
 uv run scripts/sign.py contract.pdf
 
-# Multiple signers chain via filename
-uv run scripts/sign.py contract.pdf                  # → contract_felixboehm.pdf
-# send contract_felixboehm.pdf to your co-signer
+# Multiple signers chain via filename (alice and bob are placeholders)
+uv run scripts/sign.py contract.pdf                  # → contract_alice.pdf
+# send contract_alice.pdf to your co-signer
 # they run on their machine:
-uv run scripts/sign.py contract_felixboehm.pdf       # → contract_felixboehm_nantero1.pdf
+uv run scripts/sign.py contract_alice.pdf            # → contract_alice_bob.pdf
 
 # Verify
-uv run scripts/verify.py contract_felixboehm_nantero1.pdf --trust ../trust
+uv run scripts/verify.py contract_alice_bob.pdf
 ```
 
 ## Rotating the passphrase
@@ -164,12 +164,12 @@ uv run scripts/verify.py contract_felixboehm_nantero1.pdf --trust ../trust
 All configuration in `~/.config/pd/signer.conf` (plain `key=value`):
 
 ```
-github_username=felixboehm
-email=felix@performance-dudes.de
+github_username=<your-github-username>
+email=<your-email>
 org=Performance Dudes
-trust_repo=/Users/felix/work/performance-dudes/trust
-signature_path=/Users/felix/.config/pd/signature.png
-keychain_account=felixboehm
+trust_repo=~/work/performance-dudes/trust
+signature_path=~/.config/pd/signature.png
+keychain_account=<your-github-username>
 ```
 
 Scripts read these as defaults; every option can be overridden on the command line.

@@ -118,7 +118,7 @@ def main() -> None:
                         help="Sign without visible stamp (overrides default signature)")
     parser.add_argument("--output", "-o", type=Path,
                         help="Output path. Default: <input_stem>_<username>.pdf "
-                             "(chaining signers, e.g. contract_felixboehm_nantero1.pdf)")
+                             "(chaining signers, e.g. contract_alice_bob.pdf)")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite output file if it exists")
     parser.add_argument("--field", default="PDSign", help="Signature field name (default: PDSign)")
