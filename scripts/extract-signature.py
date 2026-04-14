@@ -13,12 +13,18 @@ Workflow:
     4. Run this script to extract the signature as a transparent PNG
 
 Usage:
-    uv run scripts/extract-signature.py <signed-pdf>
-    uv run scripts/extract-signature.py <signed-pdf> --output ~/.config/pd/signature.png
+    uv run scripts/extract-signature.py <signed-pdf> [--name <name> | --output <path>]
 
 The script renders the PDF at high resolution, detects the signature
 region (separated from text by whitespace), crops it, and makes the
-background transparent.
+background transparent. The saved path is recorded as
+`visual_signature_default` in ~/.config/pd/signer.conf, so
+`sign.py --visual-signature` (no argument) picks it up automatically.
+
+Examples:
+    uv run scripts/extract-signature.py signed.pdf                 # → ~/.config/pd/signature.png
+    uv run scripts/extract-signature.py signed.pdf --name formal   # → ~/.config/pd/formal.png
+    uv run scripts/extract-signature.py signed.pdf --output ~/path/foo.png
 """
 
 import argparse
@@ -137,12 +143,21 @@ def make_background_transparent(img: Image.Image, threshold: int = 235) -> Image
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract signature from a Preview-signed PDF")
     parser.add_argument("pdf", type=Path, help="PDF with a signature added in Preview")
-    parser.add_argument("--output", type=Path,
-                        default=Path.home() / ".config" / "pd" / "signature.png",
-                        help="Output PNG path (default: ~/.config/pd/signature.png)")
+    dest = parser.add_mutually_exclusive_group()
+    dest.add_argument("--name", metavar="NAME",
+                      help="Save as ~/.config/pd/<NAME>.png (useful for multiple signatures). "
+                           "Mutually exclusive with --output.")
+    dest.add_argument("--output", type=Path,
+                      help="Output PNG path. Mutually exclusive with --name. "
+                           "Default (neither given): ~/.config/pd/signature.png")
     parser.add_argument("--resolution", type=int, default=3000,
                         help="Render resolution in pixels (longest edge, default: 3000)")
     args = parser.parse_args()
+
+    if args.name:
+        args.output = CONFIG_DIR / f"{args.name}.png"
+    elif args.output is None:
+        args.output = CONFIG_DIR / "signature.png"
 
     if not args.pdf.exists():
         print(f"Error: PDF not found: {args.pdf}", file=sys.stderr)
@@ -173,12 +188,13 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     result.save(args.output, "PNG")
 
-    update_config({"signature_path": str(args.output.resolve())})
+    update_config({"visual_signature_default": str(args.output.resolve())})
 
     print(f"\n✓ Signature saved: {args.output}")
     print(f"  Size: {result.size[0]}x{result.size[1]}")
-    print(f"✓ Config updated: signature_path={args.output}")
-    print(f"\nUse with: uv run scripts/sign.py document.pdf")
+    print(f"✓ Config updated: visual_signature_default={args.output}")
+    print(f"\nUse with: uv run scripts/sign.py document.pdf --visual-signature")
+    print(f"(or omit --visual-signature for a cryptographic-only signature)")
 
 
 if __name__ == "__main__":

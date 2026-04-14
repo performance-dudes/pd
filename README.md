@@ -168,9 +168,12 @@ github_username=<your-github-username>
 email=<your-email>
 org=Performance Dudes
 trust_repo=~/work/performance-dudes/trust
-signature_path=~/.config/pd/signature.png
+visual_signature_default=~/.config/pd/signature.png
 keychain_account=<your-github-username>
 ```
+
+`visual_signature_default` is set automatically by `extract-signature.py`.
+`sign.py --visual-signature` (no argument) resolves to this path.
 
 Scripts read these as defaults; every option can be overridden on the command line.
 
