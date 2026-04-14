@@ -7,18 +7,27 @@
 # ]
 # requires-python = ">=3.10"
 # ///
-"""Sign a PDF with a PKCS#7 digital signature, optionally with a visible signature stamp.
+"""Sign a PDF with a PKCS#7 digital signature + RFC 3161 timestamp.
+
+By default the signature is cryptographic-only (invisible). Adobe Reader,
+macOS Preview, and pyhanko still show it in their signature panel. Use
+--visual-signature <name> to additionally embed a handwritten-style
+stamp image; omit it for formal documents that already carry an inline
+handwritten signature.
 
 Usage:
-    uv run scripts/sign.py <pdf> --trust <trust-repo-path> [options]
+    uv run scripts/sign.py <pdf> [options]
 
 The signer's private key must be at ~/.config/pd/private-key.pem.
-The certificate and chain are read from the trust repo.
+The certificate and chain are read from the trust repo (auto-discovered
+from signer.conf, or pass --trust <path>).
 
 Examples:
-    uv run scripts/sign.py contract.pdf --trust ../trust
-    uv run scripts/sign.py contract.pdf --trust ../trust --signature ~/.config/pd/signature.png
-    uv run scripts/sign.py contract.pdf --trust ../trust --signature ~/.config/pd/signature.png --box 50,50,250,120
+    uv run scripts/sign.py contract.pdf
+    uv run scripts/sign.py contract.pdf --visual-signature                 # uses signer.conf default
+    uv run scripts/sign.py contract.pdf --visual-signature alice           # ~/.config/pd/alice.png
+    uv run scripts/sign.py contract.pdf --visual-signature any/path/sig.png
+    uv run scripts/sign.py contract.pdf --visual-signature alice --box 50,50,250,120
 """
 
 import argparse
@@ -35,7 +44,6 @@ from pyhanko.pdf_utils.content import ImportedPdfPage
 
 CONFIG_DIR = Path.home() / ".config" / "pd"
 CONFIG_FILE = CONFIG_DIR / "signer.conf"
-DEFAULT_SIGNATURE = CONFIG_DIR / "signature.png"
 
 
 def read_config() -> dict[str, str]:
@@ -91,18 +99,42 @@ def png_to_stamp_pdf(png_path: Path) -> str:
     return tmp_pdf.name
 
 
+_VISUAL_SIG_USE_DEFAULT = "__use_default__"
+
+
+def _resolve_visual_signature(arg: str | None, conf: dict[str, str]) -> Path | None:
+    """Resolve --visual-signature argument to a concrete PNG path.
+
+    - None                  → no visible stamp (cryptographic signature only)
+    - "__use_default__"     → flag given without arg, read signer.conf default
+    - "<name>"              → ~/.config/pd/<name>.png
+    - "<path>" (/ or .png)  → use that path directly
+    """
+    if arg is None:
+        return None
+    if arg == _VISUAL_SIG_USE_DEFAULT:
+        # Accept legacy `signature_path` for forward-compat with older configs
+        saved = conf.get("visual_signature_default") or conf.get("signature_path")
+        if not saved:
+            print("Error: --visual-signature was passed without a value, but "
+                  "signer.conf has no `visual_signature_default`. Either pass "
+                  "a name/path, or run `extract-signature.py` to set one.",
+                  file=sys.stderr)
+            sys.exit(1)
+        return Path(saved).expanduser()
+    if "/" in arg or arg.lower().endswith(".png"):
+        return Path(arg).expanduser()
+    return CONFIG_DIR / f"{arg}.png"
+
+
 def main() -> None:
     conf = read_config()
     default_trust = Path(conf["trust_repo"]).expanduser() if "trust_repo" in conf else None
-    # signature_path in config wins; else fall back to ~/.config/pd/signature.png
-    if "signature_path" in conf:
-        sig_candidate = Path(conf["signature_path"]).expanduser()
-        default_signature = sig_candidate if sig_candidate.exists() else None
-    else:
-        default_signature = DEFAULT_SIGNATURE if DEFAULT_SIGNATURE.exists() else None
-    default_nosig = conf.get("no_signature_by_default", "").lower() in ("1", "true", "yes")
 
-    parser = argparse.ArgumentParser(description="Sign a PDF with your X.509 certificate")
+    parser = argparse.ArgumentParser(
+        description="Sign a PDF with your X.509 certificate. "
+                    "By default the signature is cryptographic-only (invisible). "
+                    "Pass --visual-signature <name> to embed a visible stamp image too.")
     parser.add_argument("pdf", type=Path, help="PDF file to sign (modified in-place)")
     parser.add_argument("--trust", type=Path, default=default_trust,
                         help=f"Path to the trust repo (default: trust_repo from signer.conf, "
@@ -110,12 +142,15 @@ def main() -> None:
     parser.add_argument("--username", help="GitHub username (auto-detected from signer.conf)")
     parser.add_argument("--key", type=Path, default=Path.home() / ".config" / "pd" / "private-key.pem",
                         help="Private key path (default: ~/.config/pd/private-key.pem)")
-    parser.add_argument("--signature", type=Path,
-                        default=None if default_nosig else default_signature,
-                        help=f"Signature image for visible stamp (default: "
-                             f"{default_signature or '(none)'})")
-    parser.add_argument("--no-signature", action="store_true",
-                        help="Sign without visible stamp (overrides default signature)")
+    parser.add_argument("--visual-signature", dest="visual_signature",
+                        nargs="?", const=_VISUAL_SIG_USE_DEFAULT, default=None,
+                        metavar="NAME-OR-PATH",
+                        help="Embed a visible signature stamp. Without a value, uses "
+                             "`visual_signature_default` from signer.conf (set by "
+                             "extract-signature.py). With a name, uses ~/.config/pd/<name>.png. "
+                             "With a path (containing / or ending in .png), uses that file. "
+                             "Omit this flag entirely for cryptographic-only signing — the "
+                             "PKCS#7 signature + RFC 3161 timestamp are always embedded.")
     parser.add_argument("--output", "-o", type=Path,
                         help="Output path. Default: <input_stem>_<username>.pdf "
                              "(chaining signers, e.g. contract_alice_bob.pdf)")
@@ -135,9 +170,6 @@ def main() -> None:
                              "durable documents — the timestamp is a major part of long-term "
                              "signature validity.")
     args = parser.parse_args()
-
-    if args.no_signature:
-        args.signature = None
 
     if not args.pdf.exists():
         print(f"Error: PDF not found: {args.pdf}", file=sys.stderr)
@@ -218,17 +250,18 @@ def main() -> None:
             print(f"Error loading key: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Build visual stamp if signature image provided
+    # Build visual stamp if --visual-signature was given
     stamp_style = None
     field_spec = None
     stamp_pdf_path = None
+    visual_sig_path = _resolve_visual_signature(args.visual_signature, conf)
 
-    if args.signature:
-        if not args.signature.exists():
-            print(f"Error: Signature image not found: {args.signature}", file=sys.stderr)
+    if visual_sig_path is not None:
+        if not visual_sig_path.exists():
+            print(f"Error: Visual signature image not found: {visual_sig_path}", file=sys.stderr)
             sys.exit(1)
 
-        stamp_pdf_path = png_to_stamp_pdf(args.signature)
+        stamp_pdf_path = png_to_stamp_pdf(visual_sig_path)
         stamp_style = StaticStampStyle(
             background=ImportedPdfPage(stamp_pdf_path),
             border_width=0,
@@ -306,8 +339,10 @@ def main() -> None:
     print(f"  Signer:    {username}")
     print(f"  Field:     {args.field}")
     print(f"  Reason:    {args.reason}")
-    if args.signature:
-        print(f"  Stamp:     {args.signature}")
+    if visual_sig_path is not None:
+        print(f"  Stamp:     {visual_sig_path}")
+    else:
+        print(f"  Stamp:     (none — cryptographic-only)")
 
 
 if __name__ == "__main__":
