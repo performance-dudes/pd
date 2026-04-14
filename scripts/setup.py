@@ -5,17 +5,20 @@
 """Set up local signing environment.
 
 Usage:
-    uv run scripts/setup.py --username <github-username> --email <email> [--trust <trust-repo-path>]
+    uv run scripts/setup.py --username <github-username> --email <email>
 
-Generates a key pair, creates a CSR, and writes signer config.
-The CSR must then be submitted to the trust repo and signed via pki-issue.
+Generates a key pair (RSA-4096 by default), creates a CSR, writes signer
+config, and copies the CSR into the trust repo's pki/csrs/. The trust
+repo is auto-discovered (from signer.conf or the pd sibling layout);
+pass --trust <path> to override or --no-trust-copy to skip the copy.
 
 Config is merged: existing keys in ~/.config/pd/signer.conf are preserved
 unless overwritten by a new value. Comments and unknown keys are kept.
 
 Examples:
     uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de
-    uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de --trust ../trust
+    uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de --force --bits 4096
+    uv run scripts/setup.py --username felixboehm --email felix@performance-dudes.de --trust /custom/path
 """
 
 import argparse
@@ -26,6 +29,29 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".config" / "pd"
 CONFIG_FILE = CONFIG_DIR / "signer.conf"
+
+
+def _discover_trust_repo() -> Path | None:
+    """Find a clone of performance-dudes/trust without requiring --trust.
+
+    Search order:
+      1. trust_repo value previously saved in signer.conf
+      2. ../trust relative to this script's pd repo (performance-dudes/{pd,trust} sibling layout)
+
+    A candidate is accepted if the directory exists and is a git repo.
+    """
+    cfg = read_config()
+    if saved := cfg.get("trust_repo"):
+        p = Path(saved).expanduser()
+        if (p / ".git").exists():
+            return p
+
+    pd_repo_root = Path(__file__).resolve().parent.parent
+    sibling = pd_repo_root.parent / "trust"
+    if (sibling / ".git").exists():
+        return sibling
+
+    return None
 
 
 def read_config() -> dict[str, str]:
@@ -57,13 +83,21 @@ def main() -> None:
     parser.add_argument("--username", required=True, help="Your GitHub username")
     parser.add_argument("--email", required=True, help="Your email address")
     parser.add_argument("--org", default="Performance Dudes", help="Organization name for cert subject")
-    parser.add_argument("--trust", type=Path, help="Path to trust repo (copies CSR there if provided)")
+    parser.add_argument("--trust", type=Path,
+                        help="Path to trust repo. Default: auto-discovered from signer.conf, then from "
+                             "the pd repo's sibling at ../trust. Pass --no-trust-copy to skip the CSR copy.")
+    parser.add_argument("--no-trust-copy", action="store_true",
+                        help="Skip copying the CSR into the trust repo (rarely needed; default is to copy).")
     parser.add_argument("--bits", type=int, default=4096,
                         help="RSA key size in bits (default: 4096). 3072 is the BSI minimum for long-term signing; "
                              "4096 is the PD default for durable signatures with classical-security margin.")
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing key + CSR (e.g., when upgrading key size).")
     args = parser.parse_args()
+
+    # Discover trust repo if not passed explicitly
+    if args.trust is None and not args.no_trust_copy:
+        args.trust = _discover_trust_repo()
 
     key_path = CONFIG_DIR / "private-key.pem"
     csr_path = CONFIG_DIR / "signing.csr"
@@ -109,8 +143,8 @@ def main() -> None:
     for k, v in updates.items():
         print(f"  {k}={v}")
 
-    # Copy CSR to trust repo if provided
-    if args.trust:
+    # Copy CSR into the trust repo (always, unless --no-trust-copy)
+    if args.trust and not args.no_trust_copy:
         csrs_dir = args.trust / "pki" / "csrs"
         csrs_dir.mkdir(parents=True, exist_ok=True)
         dest = csrs_dir / f"{args.username}.csr"
@@ -118,12 +152,16 @@ def main() -> None:
         print(f"\nCSR copied to: {dest}")
         print("Next steps:")
         print(f"  cd {args.trust}")
-        print(f"  git add pki/csrs/{args.username}.csr")
-        print(f"  git commit -m 'feat: add CSR for {args.username}'")
-        print(f"  git push")
+        print(f"  git checkout -b pki/csr-{args.username} && git add pki/csrs/{args.username}.csr")
+        print(f"  git commit -m 'feat: add CSR for {args.username}' && git push -u origin HEAD")
+        print(f"  gh pr create --fill  # get it merged first")
         print(f"  gh workflow run pki-issue.yml -f issuer={args.username} -f csr_path=pki/csrs/{args.username}.csr")
+    elif args.no_trust_copy:
+        print(f"\n--no-trust-copy set. Copy {csr_path} to the trust repo yourself when ready.")
     else:
-        print(f"\nNext: copy {csr_path} to the trust repo's pki/csrs/ and trigger pki-issue.")
+        print(f"\nCould not auto-discover a trust repo clone.")
+        print(f"  Checked: signer.conf trust_repo + {Path(__file__).resolve().parent.parent.parent / 'trust'}")
+        print(f"  Pass --trust <path> or clone performance-dudes/trust as a sibling of pd.")
 
 
 if __name__ == "__main__":

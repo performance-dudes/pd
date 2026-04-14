@@ -45,8 +45,10 @@ Prefer running the script — it handles defaults, force-overwrite for key upgra
 
 ```bash
 cd ~/work/performance-dudes/pd
-uv run scripts/setup.py --username <github-user> --email <email> --trust ../trust
-# add --bits 3072 only if you need the smaller key for some reason
+uv run scripts/setup.py --username <github-user> --email <email>
+# trust repo auto-discovered (signer.conf → sibling ../trust)
+# CSR copied into pki/csrs/<user>.csr automatically
+# add --bits 3072 only if you need a smaller key
 # add --force to overwrite an existing key (e.g., upgrading from 2048 → 4096)
 ```
 
