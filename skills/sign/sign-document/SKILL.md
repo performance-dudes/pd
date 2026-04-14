@@ -49,25 +49,39 @@ ISSUER_CERT="${trust_repo}/pki/issuers/${github_username}/issuing-cert.pem"
 ROOT_CERT="${trust_repo}/pki/root/ca-cert.pem"
 ```
 
-### 5. Sign the PDF with pyHanko
+### 5. Sign the PDF
+
+Prefer the script — it handles the visible stamp image, multi-signer appending, key-passphrase unlock via macOS Keychain / Touch ID, **and the RFC 3161 trusted timestamp** (on by default, pointing at DigiCert's free public TSA).
+
+```bash
+cd ~/work/performance-dudes/pd
+uv run scripts/sign.py <pdf-path>
+# add --no-tsa only if the host is offline (NOT recommended for durable documents)
+# add --tsa <url> to use a different TSA (e.g., sectigo, globalsign)
+```
+
+The trusted timestamp dramatically strengthens long-term signature validity: it proves the signature existed at time T from an independent trust anchor, so if the signer's private key leaks in 2030 it can't be used to forge a signature "from 2026" — the timestamp bounds the forgery window to after the leak.
+
+Raw-pyhanko fallback if the script isn't available:
 
 ```python
 import sys
 from pyhanko.sign import signers
+from pyhanko.sign.timestamps import HTTPTimeStamper
 from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 
 key_path = sys.argv[1]      # ~/.config/pd/private-key.pem
 cert_path = sys.argv[2]     # trust/pki/certs/<username>.pem
 chain_paths = sys.argv[3:]  # issuing cert, root cert
-pdf_path = sys.argv[-1]     # overridden below
+pdf_path = sys.argv[-1]
 
-# Build the signer with cert chain
 signer = signers.SimpleSigner.load(
     key_path,
     cert_path,
     ca_chain_files=chain_paths,
     key_passphrase=None,
 )
+timestamper = HTTPTimeStamper("http://timestamp.digicert.com")
 
 with open(pdf_path, 'rb') as f:
     w = IncrementalPdfFileWriter(f)
@@ -79,6 +93,7 @@ with open(pdf_path, 'rb') as f:
             location='Performance Dudes',
         ),
         signer=signer,
+        timestamper=timestamper,
     )
     with open(pdf_path, 'wb') as out_f:
         out_f.write(out.getbuffer())

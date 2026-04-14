@@ -58,6 +58,11 @@ def main() -> None:
     parser.add_argument("--email", required=True, help="Your email address")
     parser.add_argument("--org", default="Performance Dudes", help="Organization name for cert subject")
     parser.add_argument("--trust", type=Path, help="Path to trust repo (copies CSR there if provided)")
+    parser.add_argument("--bits", type=int, default=4096,
+                        help="RSA key size in bits (default: 4096). 3072 is the BSI minimum for long-term signing; "
+                             "4096 is the PD default for durable signatures with classical-security margin.")
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite existing key + CSR (e.g., when upgrading key size).")
     args = parser.parse_args()
 
     key_path = CONFIG_DIR / "private-key.pem"
@@ -65,17 +70,20 @@ def main() -> None:
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Generate key pair (if not exists)
-    if key_path.exists():
+    # Generate key pair
+    if key_path.exists() and not args.force:
         print(f"Private key already exists: {key_path}")
+        print("  Use --force to regenerate (e.g., to upgrade key size).")
     else:
+        if key_path.exists():
+            print(f"Overwriting existing key at {key_path} (--force).")
         subprocess.run([
             "openssl", "genpkey", "-algorithm", "RSA",
-            "-pkeyopt", "rsa_keygen_bits:2048",
+            "-pkeyopt", f"rsa_keygen_bits:{args.bits}",
             "-out", str(key_path),
         ], check=True, capture_output=True)
         key_path.chmod(0o600)
-        print(f"Generated: {key_path}")
+        print(f"Generated: {key_path} (RSA-{args.bits})")
 
     # Create CSR
     subject = f"/CN={args.username}/emailAddress={args.email}/O={args.org}"

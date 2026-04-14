@@ -126,6 +126,14 @@ def main() -> None:
     parser.add_argument("--location", default="Performance Dudes", help="Signing location")
     parser.add_argument("--page", type=int, default=0, help="Page for visible signature (0-indexed, default: 0)")
     parser.add_argument("--box", help="Signature box: x1,y1,x2,y2 in points (default: 350,50,550,120)")
+    parser.add_argument("--tsa", default="http://timestamp.digicert.com",
+                        help="RFC 3161 trusted-timestamp URL (default: DigiCert public TSA). "
+                             "The timestamp proves the signature existed at time T from an independent "
+                             "trust anchor. Adobe Reader and pyHanko verify it automatically.")
+    parser.add_argument("--no-tsa", action="store_true",
+                        help="Skip the trusted timestamp (offline signing). NOT recommended for "
+                             "durable documents — the timestamp is a major part of long-term "
+                             "signature validity.")
     args = parser.parse_args()
 
     if args.no_signature:
@@ -243,11 +251,17 @@ def main() -> None:
         location=args.location,
     )
 
+    timestamper = None
+    if not args.no_tsa:
+        from pyhanko.sign.timestamps import HTTPTimeStamper
+        timestamper = HTTPTimeStamper(args.tsa)
+
     pdf_signer = signers.PdfSigner(
         signature_meta=meta,
         signer=signer,
         stamp_style=stamp_style,
         new_field_spec=field_spec,
+        timestamper=timestamper,
     )
 
     # Determine output path: append _<username> to the stem
