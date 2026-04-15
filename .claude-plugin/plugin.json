@@ -1,7 +1,7 @@
 {
   "name": "pd",
   "description": "Performance Dudes — document signing and trust infrastructure",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Performance Dudes"
   }
