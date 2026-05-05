@@ -75,27 +75,34 @@ def find_username(trust_path: Path | None) -> str | None:
 
 
 def png_to_stamp_pdf(png_path: Path) -> str:
-    """Convert a PNG signature image to a single-page PDF for use as stamp background."""
+    """Convert a PNG signature image to a single-page PDF for use as stamp.
+
+    Preserves the alpha channel: transparent areas in the source PNG remain
+    transparent in the resulting stamp PDF, so the signature appears without
+    a white box around it when overlaid on a contract.
+    """
     from PIL import Image
     from fpdf import FPDF
 
-    img = Image.open(png_path).convert("RGB")
+    img = Image.open(png_path)
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
     w_px, h_px = img.size
     w_mm = w_px * 25.4 / 150
     h_mm = h_px * 25.4 / 150
 
-    tmp_rgb = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    img.save(tmp_rgb.name)
+    tmp_png = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    img.save(tmp_png.name)
 
     pdf = FPDF(unit="mm", format=(w_mm, h_mm))
     pdf.set_margin(0)
     pdf.add_page()
-    pdf.image(tmp_rgb.name, x=0, y=0, w=w_mm, h=h_mm)
+    pdf.image(tmp_png.name, x=0, y=0, w=w_mm, h=h_mm)
 
     tmp_pdf = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     pdf.output(tmp_pdf.name)
 
-    os.unlink(tmp_rgb.name)
+    os.unlink(tmp_png.name)
     return tmp_pdf.name
 
 
