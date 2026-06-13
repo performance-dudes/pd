@@ -22,6 +22,7 @@ The base repo's `.claude/settings.json` also declares this marketplace, so new c
 | `pd:setup-signing` | Generate key pair, create CSR, write signer config |
 | `pd:sign-document` | Sign a PDF with PKCS#7 + optional visible stamp + RFC 3161 timestamp |
 | `pd:bank-vertragsgestaltung` | Regulatory and civil-law guide for IT/consulting offers and contracts with banks in the DACH region (MaRisk AT 9, DORA, BAIT, EBA, Dienst-/Werkvertrag, T&M with Cap) |
+| `pd:git-worktrees` | Set up and operate git worktree layouts — single-repo and nested (hoisted-bare rule), classic-vs-worktree choice, add/remove/cleanup commands |
 
 ## Adding a skill
 
