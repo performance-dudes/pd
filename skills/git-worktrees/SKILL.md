@@ -69,6 +69,19 @@ The nested repo's worktrees physically sit inside the outer worktrees, but its
 bare is *hoisted* up next to the outer repo's bare. There is exactly one bare
 per repo, shared by all of that repo's worktrees wherever they sit.
 
+**Two levels, on purpose.** The nested repo splits across depths:
+
+- its **worktrees go deep** — one container folder (`app/`) inside *every* outer
+  worktree, with the actual checkout one level deeper
+  (`main/app/develop`, `feat-refactor/app/feat-refactor`). The container is a
+  plain directory: never a worktree, never holds a `.bare`.
+- its **bare stays shallow** — hoisted *out* to the outermost root
+  (`workspace/.bare-app`), exactly one, shared by all those scattered worktrees.
+
+So a fresh `git clone --bare` of the nested repo does **not** land inside the
+outer worktree where you'll use it — you clone it at the root and point the
+worktrees back at it. Worktrees nested; bare hoisted.
+
 ```
 workspace/                            # outermost level — ALL bares live here
   .bare-workspace/                    # bare for the OUTER repo
@@ -170,5 +183,11 @@ re-derived each time:
   clone.
 - Never put a nested repo's bare inside an outer worktree — it would be
   duplicated per outer worktree and the "one bare per repo" invariant breaks.
+- The container folder (`app/`) is a plain directory. If it carries its own
+  `.git` file (e.g. `gitdir: ../.bare-app`, left over from an early nested clone
+  before hoisting), that's stale cruft — it resolves to a non-existent
+  `<outer-worktree>/.bare-app`. Delete it; the real worktrees one level down
+  point at the hoisted bare via their own `.git` files. Confirm with
+  `git --git-dir=.bare-app worktree list` — only the deep checkouts should appear.
 - Worktree directories are gitignored siblings inside the outer repo; never
   commit a worktree folder or a `.bare-*`.
