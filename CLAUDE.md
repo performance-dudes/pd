@@ -2,6 +2,12 @@
 
 Claude Code plugin for PDF document signing and verification against the Performance Dudes trust infrastructure.
 
+> **⚠️ Deprecated as a plugin marketplace.** `pd@pd` no longer takes **new
+> skills** — new skills/plugins belong in the `ai-plugins` marketplaces
+> (`ai-plugins`, `ai-plugins-internal`, `ai-plugins-enterprise`). Only the
+> **active signing infrastructure** stays here (`scripts/`, skills
+> `setup-signing` / `sign-document`). Do not add anything new here.
+
 ## Installation
 
 Requires the [base workspace repo](https://github.com/performance-dudes/performance-dudes) as parent directory.
@@ -22,11 +28,11 @@ The base repo's `.claude/settings.json` also declares this marketplace, so new c
 | `pd:setup-signing` | Generate key pair, create CSR, write signer config |
 | `pd:sign-document` | Sign a PDF with PKCS#7 + optional visible stamp + RFC 3161 timestamp |
 
-> **Migriert in die `ai-plugins`-Marketplaces (abgekündigter `pd@pd`-Anteil):**
-> `git-worktrees` und `project-structure` leben jetzt in
+> **Migrated to the `ai-plugins` marketplaces (the deprecated `pd@pd` part):**
+> `git-worktrees` and `project-structure` now live in
 > `workspace@ai-plugins-internal`, `bank-vertragsgestaltung` in
-> `sales@ai-plugins-internal`. `pd` behält nur noch die Signing-Skills, die zur
-> aktiven Signing-Infrastruktur (`scripts/*.py`) gehören.
+> `sales@ai-plugins-internal`. `pd` keeps only the signing skills, which belong
+> to the active signing infrastructure (`scripts/*.py`).
 
 ## Adding a skill
 

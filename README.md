@@ -1,5 +1,22 @@
 # pd — Performance Dudes Claude Code Plugin
 
+> ## ⚠️ Deprecated as a plugin marketplace — no new skills here
+>
+> The **`pd@pd` marketplace is deprecated**. **New skills and plugins do not go
+> here anymore** — they belong in the `ai-plugins` marketplaces:
+> - `ai-plugins` (public, generic infrastructure)
+> - `ai-plugins-internal` (PD-internal)
+> - `ai-plugins-enterprise` (sellable product plugins)
+>
+> The skills that were migrated already live there: `git-worktrees` +
+> `project-structure` → `workspace@ai-plugins-internal`, `bank-vertragsgestaltung`
+> → `sales@ai-plugins-internal`.
+>
+> **What stays here:** the **active signing infrastructure** — the scripts under
+> `scripts/` and the two skills `setup-signing` / `sign-document`. Those are
+> **not** deprecated and remain in use; only `pd`'s role as a marketplace (taking
+> in new skills) is.
+
 Document signing and trust infrastructure for AI-first collaboration.
 
 Sign PDFs locally with a cryptographic PKCS#7 signature plus a visible handwritten signature stamp. Certificates are managed via the [performance-dudes/trust](https://github.com/performance-dudes/trust) PKI. On macOS, Touch ID unlocks the signing key.
